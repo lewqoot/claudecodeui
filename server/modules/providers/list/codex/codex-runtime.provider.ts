@@ -12,7 +12,7 @@
  */
 
 import { Codex } from '@openai/codex-sdk';
-import type { ModelReasoningEffort, Thread, ThreadOptions } from '@openai/codex-sdk';
+import type { CodexOptions, ModelReasoningEffort, Thread, ThreadOptions } from '@openai/codex-sdk';
 
 import {
   appendFilesInputTag,
@@ -223,8 +223,15 @@ function transformCodexEvent(event: AnyRecord): AnyRecord {
  * @param {string} permissionMode - 'default', 'acceptEdits', or 'bypassPermissions'
  * @returns {object} - { sandboxMode, approvalPolicy }
  */
-function mapPermissionModeToCodexOptions(permissionMode: string): Pick<ThreadOptions, 'sandboxMode' | 'approvalPolicy'> {
+function mapPermissionModeToCodexOptions(permissionMode: string): Pick<ThreadOptions, 'sandboxMode' | 'approvalPolicy' | 'networkAccessEnabled' | 'webSearchMode'> {
   switch (permissionMode) {
+    case 'isolatedReadOnly':
+      return {
+        sandboxMode: 'read-only',
+        approvalPolicy: 'never',
+        networkAccessEnabled: false,
+        webSearchMode: 'disabled'
+      };
     case 'acceptEdits':
       return {
         sandboxMode: 'workspace-write',
@@ -267,7 +274,10 @@ async function queryCodex(
     effort,
     images,
     files,
-    permissionMode = 'default'
+    permissionMode = 'default',
+    codexEnvironment,
+    codexConfig,
+    codexConfigOverrides
   } = options;
 
   // Callers pass the stable app session id; the SDK resumes threads with the
@@ -277,7 +287,7 @@ async function queryCodex(
   const resolvedModel = await context.resolveResumeModel(sessionId, model);
 
   const workingDirectory = cwd || projectPath || process.cwd();
-  const { sandboxMode, approvalPolicy } = mapPermissionModeToCodexOptions(permissionMode);
+  const { sandboxMode, approvalPolicy, networkAccessEnabled, webSearchMode } = mapPermissionModeToCodexOptions(permissionMode);
   const catalog = await context.getProviderModels();
   const selectedModel = catalog.OPTIONS.find((option) => option.value === resolvedModel) || null;
   const allowedEfforts = selectedModel?.effort?.values?.map((value) => value.value) || [];
@@ -304,13 +314,26 @@ async function queryCodex(
   const sessionKey = () => sessionId || capturedSessionId || null;
 
   try {
-    codex = new Codex();
+    const clientOptions: CodexOptions = {};
+    if (codexEnvironment && typeof codexEnvironment === 'object' && !Array.isArray(codexEnvironment)) {
+      clientOptions.env = Object.fromEntries(Object.entries(codexEnvironment)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    }
+    if (codexConfig && typeof codexConfig === 'object' && !Array.isArray(codexConfig)) {
+      clientOptions.config = codexConfig;
+    }
+    if (Array.isArray(codexConfigOverrides) && codexConfigOverrides.every((value) => typeof value === 'string')) {
+      clientOptions.configOverrides = codexConfigOverrides;
+    }
+    codex = new Codex(clientOptions);
 
     const threadOptions: ThreadOptions = {
       workingDirectory,
       skipGitRepoCheck: true,
       sandboxMode,
       approvalPolicy,
+      networkAccessEnabled,
+      webSearchMode,
       model: resolvedModel,
       modelReasoningEffort: resolvedEffort,
     };

@@ -31,6 +31,7 @@ import { commandsRoutes } from './modules/commands/index.js';
 import { settingsRoutes } from './modules/settings/index.js';
 import { createSystemModule } from './modules/system/index.js';
 import { createAgentModule } from './modules/agent/index.js';
+import { createScreenscriptAgentModule } from './modules/screenscript-agent/index.js';
 import projectModuleRoutes from './modules/projects/projects.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import { userRoutes } from './modules/user/index.js';
@@ -97,6 +98,7 @@ const agentRoutes = createAgentModule({
     queryCodex,
     queryOpenCode,
 });
+const screenscriptAgentRoutes = createScreenscriptAgentModule({ queryCodex });
 
 // Single WebSocket server that handles chat, shell, and plugin proxy paths.
 createWebSocketServer(server, {
@@ -196,6 +198,9 @@ app.use('/api/scheduled-messages', authenticateToken, scheduledMessagesRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
+
+// Private ScreenScript controller channel (API key + dedicated channel key).
+app.use('/api/screenscript-agent', screenscriptAgentRoutes);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
 
