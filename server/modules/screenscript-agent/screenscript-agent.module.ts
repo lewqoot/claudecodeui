@@ -18,7 +18,9 @@ type ModuleDependencies = {
 export function createScreenscriptAgentModule(dependencies: ModuleDependencies) {
   const environment = dependencies.environment ?? process.env;
   const enabled = environment.SCREENSCRIPT_AGENT_CHANNEL_ENABLED === 'true';
+  const apiSecret = String(environment.CLOUDCLI_API_KEY ?? '');
   const channelSecret = String(environment.SCREENSCRIPT_AGENT_CHANNEL_KEY ?? '');
+  if (enabled && apiSecret.length < 24) throw new Error('CLOUDCLI_API_KEY_INVALID');
   if (enabled && channelSecret.length < 32) throw new Error('SCREENSCRIPT_AGENT_CHANNEL_KEY_INVALID');
   const runsRoot = environment.SCREENSCRIPT_AGENT_RUNS_ROOT || '/data/workspaces/screenscript-agent-runs';
   const codexHome = environment.SCREENSCRIPT_AGENT_CODEX_HOME || '/data/.codex-screenscript-agent';
@@ -30,5 +32,10 @@ export function createScreenscriptAgentModule(dependencies: ModuleDependencies) 
     codexHome,
     processEnvironment: environment,
   });
-  return createScreenscriptAgentRouter({ enabled: enabled && Boolean(channelSecret), channelSecret, service });
+  return createScreenscriptAgentRouter({
+    enabled: enabled && Boolean(apiSecret) && Boolean(channelSecret),
+    apiSecret,
+    channelSecret,
+    service,
+  });
 }

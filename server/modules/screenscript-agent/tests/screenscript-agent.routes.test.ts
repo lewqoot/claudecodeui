@@ -24,21 +24,27 @@ async function withServer(
   }
 }
 
-test('ScreenScript route requires its dedicated channel secret', async () => {
-  await withServer({ enabled: true, channelSecret: 'channel-secret', service: { runTurn: async () => undefined, removeRun: async () => false } }, async (url) => {
+test('ScreenScript route requires both the CloudCLI API key and its dedicated channel secret', async () => {
+  await withServer({ enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret', service: { runTurn: async () => undefined, removeRun: async () => false } }, async (url) => {
     const response = await fetch(url, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-screenscript-agent-key': 'wrong-secret' },
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'wrong-secret' },
       body: JSON.stringify({ runId: 'run-1', message: 'Return JSON', model: 'gpt-test' }),
     });
     assert.equal(response.status, 403);
     assert.deepEqual(await response.json(), { error: 'SCREENSCRIPT_AGENT_CHANNEL_FORBIDDEN' });
+
+    const wrongApiKey = await fetch(url, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'wrong-api-key', 'x-screenscript-agent-key': 'channel-secret' },
+      body: JSON.stringify({ runId: 'run-1', message: 'Return JSON', model: 'gpt-test' }),
+    });
+    assert.equal(wrongApiKey.status, 403);
   });
 });
 
 test('ScreenScript route streams only the isolated service result', async () => {
   const calls: any[] = [];
   await withServer({
-    enabled: true,
+    enabled: true, apiSecret: 'api-secret',
     channelSecret: 'channel-secret',
     service: {
       async removeRun() { return false; },
@@ -51,7 +57,7 @@ test('ScreenScript route streams only the isolated service result', async () => 
     },
   }, async (url) => {
     const response = await fetch(url, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-screenscript-agent-key': 'channel-secret' },
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' },
       body: JSON.stringify({ runId: 'run-1', message: 'Return JSON', model: 'gpt-test', evidence: [] }),
     });
     assert.equal(response.status, 200);
@@ -66,16 +72,16 @@ test('ScreenScript route streams only the isolated service result', async () => 
 test('ScreenScript route removes only the requested isolated run through the authenticated channel', async () => {
   const removedRunIds: string[] = [];
   await withServer({
-    enabled: true,
+    enabled: true, apiSecret: 'api-secret',
     channelSecret: 'channel-secret',
     service: {
       async runTurn() {},
       async removeRun(runId) { removedRunIds.push(runId); return true; },
     },
   }, async (url) => {
-    const denied = await fetch(`${url}/run-1`, { method: 'DELETE', headers: { 'x-screenscript-agent-key': 'wrong' } });
+    const denied = await fetch(`${url}/run-1`, { method: 'DELETE', headers: { 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'wrong' } });
     assert.equal(denied.status, 403);
-    const response = await fetch(`${url}/run-1`, { method: 'DELETE', headers: { 'x-screenscript-agent-key': 'channel-secret' } });
+    const response = await fetch(`${url}/run-1`, { method: 'DELETE', headers: { 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' } });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { removed: true });
   });

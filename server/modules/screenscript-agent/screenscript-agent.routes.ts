@@ -18,6 +18,7 @@ type ScreenscriptAgentService = {
 
 type RouterDependencies = {
   enabled: boolean;
+  apiSecret: string;
   channelSecret: string;
   service: ScreenscriptAgentService;
 };
@@ -41,7 +42,8 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
       response.status(503).json({ error: 'SCREENSCRIPT_AGENT_CHANNEL_DISABLED' });
       return false;
     }
-    if (!sameSecret(request.headers['x-screenscript-agent-key'], dependencies.channelSecret)) {
+    if (!sameSecret(request.headers['x-api-key'], dependencies.apiSecret)
+      || !sameSecret(request.headers['x-screenscript-agent-key'], dependencies.channelSecret)) {
       response.status(403).json({ error: 'SCREENSCRIPT_AGENT_CHANNEL_FORBIDDEN' });
       return false;
     }
