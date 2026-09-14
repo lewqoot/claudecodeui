@@ -4,6 +4,7 @@ import type { ProviderRunFunction } from '@/shared/index.js';
 import { providerModelsService } from '@/modules/providers/index.js';
 
 import { createScreenscriptAgentRouter } from './screenscript-agent.routes.js';
+import { createScreenscriptAgentAuthService } from './screenscript-agent-auth.service.js';
 import { createScreenscriptAgentService } from './screenscript-agent.service.js';
 
 type ModuleDependencies = {
@@ -32,10 +33,15 @@ export function createScreenscriptAgentModule(dependencies: ModuleDependencies) 
     codexHome,
     processEnvironment: environment,
   });
+  const authService = createScreenscriptAgentAuthService({
+    codexHome,
+    codexBin: environment.SCREENSCRIPT_AGENT_CODEX_BIN || '/app/node_modules/.bin/codex',
+    processEnvironment: environment,
+  });
   return createScreenscriptAgentRouter({
     enabled: enabled && Boolean(apiSecret) && Boolean(channelSecret),
     apiSecret,
     channelSecret,
-    service,
+    service: { ...service, ...authService },
   });
 }

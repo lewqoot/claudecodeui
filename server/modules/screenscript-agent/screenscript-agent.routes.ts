@@ -5,6 +5,18 @@ import express from 'express';
 import type { ProviderRuntimeWriter } from '@/shared/index.js';
 
 type ScreenscriptAgentService = {
+  authProgress(): {
+    phase: string; verificationUrl: string | null; userCode: string | null; expiresAt: number | null; error: string | null;
+  };
+  cancelAuthLogin(): {
+    phase: string; verificationUrl: string | null; userCode: string | null; expiresAt: number | null; error: string | null;
+  };
+  readAuthStatus(): Promise<{
+    signedIn: boolean; detail: string; email: string | null; authMode: string | null; error: string | null;
+  }>;
+  startAuthLogin(): Promise<{
+    phase: string; verificationUrl: string | null; userCode: string | null; expiresAt: number | null; error: string | null;
+  }>;
   removeRun(runId: string): Promise<boolean>;
   runTurn(input: {
     runId: string;
@@ -30,6 +42,18 @@ function sameSecret(presented: unknown, expected: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function publicAgentErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/^SCREENSCRIPT_AGENT_[A-Z0-9_]+$/.test(message)) return message;
+  if (/token_revoked|not logged in|login required|unauthori[sz]ed|\b401\b/i.test(message)) {
+    return 'SCREENSCRIPT_AGENT_CODEX_AUTH_INVALID';
+  }
+  if (/usage limit|rate limit|quota|too many requests|\b429\b/i.test(message)) {
+    return 'SCREENSCRIPT_AGENT_CODEX_LIMIT_REACHED';
+  }
+  return 'SCREENSCRIPT_AGENT_FAILED';
+}
+
 /**
  * Creates the private ScreenScript-to-Codex route consumed only by the
  * ScreenScript worker. The module assembly supplies its isolated run service.
@@ -49,6 +73,38 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
     }
     return true;
   };
+
+  router.get('/auth/account', async (request, response) => {
+    if (!authorize(request, response)) return;
+    try {
+      response.status(200).json(await dependencies.service.readAuthStatus());
+    } catch {
+      response.status(502).json({ error: 'SCREENSCRIPT_AGENT_AUTH_STATUS_FAILED' });
+    }
+  });
+
+  router.get('/auth/progress', (request, response) => {
+    if (!authorize(request, response)) return;
+    response.status(200).json(dependencies.service.authProgress());
+  });
+
+  router.post('/auth/start', async (request, response) => {
+    if (!authorize(request, response)) return;
+    if (request.body?.confirmPausedRuns !== true) {
+      response.status(409).json({ error: 'SCREENSCRIPT_AGENT_AUTH_PAUSE_CONFIRMATION_REQUIRED' });
+      return;
+    }
+    try {
+      response.status(200).json(await dependencies.service.startAuthLogin());
+    } catch {
+      response.status(502).json({ error: 'SCREENSCRIPT_AGENT_AUTH_START_FAILED' });
+    }
+  });
+
+  router.post('/auth/cancel', (request, response) => {
+    if (!authorize(request, response)) return;
+    response.status(200).json(dependencies.service.cancelAuthLogin());
+  });
 
   router.delete('/:runId', async (request, response) => {
     if (!authorize(request, response)) return;
@@ -102,7 +158,7 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
       writer.send({
         kind: 'error',
         role: 'error',
-        content: error instanceof Error ? error.message : 'SCREENSCRIPT_AGENT_FAILED',
+        content: publicAgentErrorCode(error),
       });
       writer.send({ kind: 'complete', success: false, exitCode: 1 });
     } finally {
