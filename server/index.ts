@@ -98,7 +98,7 @@ const agentRoutes = createAgentModule({
     queryCodex,
     queryOpenCode,
 });
-const screenscriptAgentRoutes = createScreenscriptAgentModule({ queryCodex });
+const screenscriptAgentModule = createScreenscriptAgentModule({ queryCodex });
 
 // Single WebSocket server that handles chat, shell, and plugin proxy paths.
 createWebSocketServer(server, {
@@ -200,7 +200,11 @@ app.use('/api/scheduled-messages', authenticateToken, scheduledMessagesRoutes);
 app.use('/api/agent', agentRoutes);
 
 // Private ScreenScript controller channel (API key + dedicated channel key).
-app.use('/api/screenscript-agent', screenscriptAgentRoutes);
+app.use('/api/screenscript-agent', screenscriptAgentModule.workerRouter);
+
+// CloudCLI Settings recovery surface. It uses the signed-in CloudCLI owner,
+// not worker credentials, and only exposes device-auth status/link/code.
+app.use('/api/screenscript-operator', authenticateToken, screenscriptAgentModule.operatorRouter);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
 

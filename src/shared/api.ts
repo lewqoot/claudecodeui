@@ -467,6 +467,16 @@ export const api = {
     deleteDraft: (scope: string) => del('/api/user/drafts', { scope }),
   },
 
+  // The Settings-only ScreenScript account surface is authenticated as the
+  // CloudCLI owner. Worker-channel keys stay on the server and are never sent
+  // to this browser client.
+  screenscriptOperator: {
+    account: () => get('/api/screenscript-operator/account'),
+    progress: () => get('/api/screenscript-operator/progress'),
+    start: () => post('/api/screenscript-operator/start', { confirmPausedRuns: true }),
+    cancel: () => post('/api/screenscript-operator/cancel'),
+  },
+
   // Server-side settings: API keys, stored credentials, notifications, web push
   settings: {
     apiKeys: () => get('/api/settings/api-keys'),

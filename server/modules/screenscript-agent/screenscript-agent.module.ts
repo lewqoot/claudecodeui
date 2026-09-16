@@ -6,6 +6,7 @@ import { providerModelsService } from '@/modules/providers/index.js';
 import { createScreenscriptAgentRouter } from './screenscript-agent.routes.js';
 import { createScreenscriptAgentAuthService } from './screenscript-agent-auth.service.js';
 import { createScreenscriptAgentService } from './screenscript-agent.service.js';
+import { createScreenscriptOperatorRouter } from './screenscript-operator.routes.js';
 
 type ModuleDependencies = {
   queryCodex: ProviderRunFunction;
@@ -13,8 +14,8 @@ type ModuleDependencies = {
 };
 
 /**
- * Assembles the private ScreenScript agent channel for the server entrypoint.
- * It is disabled unless both the feature flag and a dedicated secret exist.
+ * Assembles the private worker channel and the separately authenticated
+ * CloudCLI Settings recovery surface for the server entrypoint.
  */
 export function createScreenscriptAgentModule(dependencies: ModuleDependencies) {
   const environment = dependencies.environment ?? process.env;
@@ -38,10 +39,17 @@ export function createScreenscriptAgentModule(dependencies: ModuleDependencies) 
     codexBin: environment.SCREENSCRIPT_AGENT_CODEX_BIN || '/app/node_modules/.bin/codex',
     processEnvironment: environment,
   });
-  return createScreenscriptAgentRouter({
-    enabled: enabled && Boolean(apiSecret) && Boolean(channelSecret),
-    apiSecret,
-    channelSecret,
-    service: { ...service, ...authService },
-  });
+  const channelEnabled = enabled && Boolean(apiSecret) && Boolean(channelSecret);
+  return {
+    workerRouter: createScreenscriptAgentRouter({
+      enabled: channelEnabled,
+      apiSecret,
+      channelSecret,
+      service: { ...service, ...authService },
+    }),
+    operatorRouter: createScreenscriptOperatorRouter({
+      enabled: channelEnabled,
+      service: authService,
+    }),
+  };
 }
