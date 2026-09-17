@@ -475,6 +475,7 @@ export const api = {
     progress: () => get('/api/screenscript-operator/progress'),
     start: () => post('/api/screenscript-operator/start', { confirmPausedRuns: true }),
     cancel: () => post('/api/screenscript-operator/cancel'),
+    usage: () => get('/api/screenscript-operator/usage'),
   },
 
   // Server-side settings: API keys, stored credentials, notifications, web push

@@ -15,6 +15,7 @@ function service(overrides: Partial<OperatorOptions['service']> = {}): OperatorO
     cancelAuthLogin: () => ({ phase: 'idle', verificationUrl: null, userCode: null, expiresAt: null, error: null }),
     readAuthStatus: async () => ({ signedIn: true, detail: 'Logged in using ChatGPT', email: 'production@example.test', authMode: 'chatgpt', error: null }),
     startAuthLogin: async () => ({ phase: 'waiting', verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'ABCD-EFGH', expiresAt: 1, error: null }),
+    readRateLimits: async () => ({ limits: [{ id: 'codex', name: null, planType: 'plus', windows: [{ kind: 'primary', usedPercent: 12, windowDurationMins: 300, resetsAt: null }] }] }),
     ...overrides,
   };
 }
@@ -69,5 +70,26 @@ test('CloudCLI Settings recovery remains unavailable when the ScreenScript chann
     const response = await fetch(`${url}/account`);
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: 'SCREENSCRIPT_AGENT_CHANNEL_DISABLED' });
+  });
+});
+
+test('CloudCLI Settings recovery exposes plan-limit windows for the isolated profile', async () => {
+  await withServer({ enabled: true, service: service() }, async (url) => {
+    const response = await fetch(`${url}/usage`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      limits: [{ id: 'codex', name: null, planType: 'plus', windows: [{ kind: 'primary', usedPercent: 12, windowDurationMins: 300, resetsAt: null }] }],
+    });
+  });
+});
+
+test('CloudCLI Settings recovery reports a safe error when the isolated profile cannot be reached', async () => {
+  await withServer({
+    enabled: true,
+    service: service({ readRateLimits: async () => { throw new Error('Codex app-server exited (1). auth.json missing'); } }),
+  }, async (url) => {
+    const response = await fetch(`${url}/usage`);
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: 'SCREENSCRIPT_AGENT_USAGE_FAILED' });
   });
 });

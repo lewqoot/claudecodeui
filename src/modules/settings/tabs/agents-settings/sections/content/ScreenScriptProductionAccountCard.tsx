@@ -21,9 +21,40 @@ type DeviceAuthProgress = {
   error: string | null;
 };
 
+type RateWindow = {
+  kind: 'primary' | 'secondary';
+  usedPercent: number;
+  windowDurationMins: number;
+  resetsAt: string | null;
+};
+
+type RateLimitsData = {
+  limits: { id: string; name: string | null; planType: string | null; windows: RateWindow[] }[];
+};
+
 const INITIAL_PROGRESS: DeviceAuthProgress = {
   phase: 'idle', verificationUrl: null, userCode: null, expiresAt: null, error: null,
 };
+
+function formatWindowDuration(minutes: number): string {
+  if (minutes % 10_080 === 0) return `${minutes / 10_080}w`;
+  if (minutes % 1_440 === 0) return `${minutes / 1_440}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}m`;
+}
+
+function formatResetCountdown(resetsAt: string | null): string | null {
+  if (!resetsAt) return null;
+  const remainingMs = Date.parse(resetsAt) - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
+  const totalMinutes = Math.floor(remainingMs / 60_000);
+  const days = Math.floor(totalMinutes / 1_440);
+  const hours = Math.floor((totalMinutes % 1_440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
 
 /** Rendered by the Codex Account settings panel to manage only the isolated ScreenScript production profile. */
 export default function ScreenScriptProductionAccountCard() {
@@ -38,11 +69,26 @@ export default function ScreenScriptProductionAccountCard() {
   const [pausedRunsConfirmed, setPausedRunsConfirmed] = useState(false);
   // Surfaces safe server failures without showing implementation details or credentials.
   const [error, setError] = useState<string | null>(null);
+  // Plan-limit windows for the isolated profile; null while loading, undefined-like on fetch failure via usageError.
+  const [usage, setUsage] = useState<RateLimitsData | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+
+  const refreshUsage = useCallback(async () => {
+    try {
+      const response = await api.screenscriptOperator.usage();
+      setUsage(await readApiJson<RateLimitsData>(response));
+      setUsageError(null);
+    } catch (caughtError) {
+      setUsageError(caughtError instanceof Error ? caughtError.message : t('agents.screenscriptProduction.usageUnavailable'));
+    }
+  }, [t]);
 
   const refreshAccount = useCallback(async () => {
     const response = await api.screenscriptOperator.account();
-    setAccount(await readApiJson<ProductionAccountStatus>(response));
-  }, []);
+    const nextAccount = await readApiJson<ProductionAccountStatus>(response);
+    setAccount(nextAccount);
+    if (nextAccount.signedIn) void refreshUsage();
+  }, [refreshUsage]);
 
   const refreshProgress = useCallback(async () => {
     const response = await api.screenscriptOperator.progress();
@@ -124,6 +170,33 @@ export default function ScreenScriptProductionAccountCard() {
           </p>
         </div>
       </div>
+
+      {account?.signedIn && (
+        <div className="mt-4 space-y-3">
+          <p className="text-sm font-medium text-foreground">{t('agents.screenscriptProduction.usageTitle')}</p>
+          {usageError && <p className="text-sm text-destructive" role="alert">{usageError}</p>}
+          {!usageError && usage?.limits.flatMap((limit) => limit.windows).map((window) => {
+            const resetCountdown = formatResetCountdown(window.resetsAt);
+            return (
+              <div key={window.kind}>
+                <div className="flex items-baseline justify-between text-sm">
+                  <span className="text-muted-foreground">Codex · {formatWindowDuration(window.windowDurationMins)}</span>
+                  <span className="text-muted-foreground">
+                    {Math.round(window.usedPercent)}%
+                    {resetCountdown ? ` · ${t('agents.screenscriptProduction.usageResetsIn', { time: resetCountdown })}` : ''}
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={window.usedPercent >= 90 ? 'h-full bg-destructive' : window.usedPercent >= 70 ? 'h-full bg-amber-500' : 'h-full bg-primary'}
+                    style={{ width: `${Math.min(100, window.usedPercent)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {!isWaiting && (
         <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-foreground">

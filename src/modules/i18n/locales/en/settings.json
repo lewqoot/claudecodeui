@@ -391,7 +391,10 @@
       "connectAccount": "Connect production account",
       "cancelLogin": "Cancel sign-in",
       "refreshStatus": "Refresh status",
-      "unknownError": "Could not check the production account."
+      "unknownError": "Could not check the production account.",
+      "usageTitle": "Plan limits",
+      "usageUnavailable": "Could not load plan limits.",
+      "usageResetsIn": "resets in {{time}}"
     }
   },
   "permissions": {

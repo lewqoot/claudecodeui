@@ -345,7 +345,10 @@
       "connectAccount": "Подключить production-аккаунт",
       "cancelLogin": "Отменить вход",
       "refreshStatus": "Обновить статус",
-      "unknownError": "Не удалось проверить production-аккаунт."
+      "unknownError": "Не удалось проверить production-аккаунт.",
+      "usageTitle": "Лимиты плана",
+      "usageUnavailable": "Не удалось загрузить лимиты плана.",
+      "usageResetsIn": "сброс через {{time}}"
     }
   },
   "permissions": {

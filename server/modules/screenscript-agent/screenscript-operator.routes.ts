@@ -1,10 +1,11 @@
 import express from 'express';
 
 import type { createScreenscriptAgentAuthService } from './screenscript-agent-auth.service.js';
+import type { createScreenscriptAgentUsageService } from './screenscript-agent-usage.service.js';
 
 type ScreenscriptOperatorRouterDependencies = {
   enabled: boolean;
-  service: ReturnType<typeof createScreenscriptAgentAuthService>;
+  service: ReturnType<typeof createScreenscriptAgentAuthService> & ReturnType<typeof createScreenscriptAgentUsageService>;
 };
 
 /**
@@ -53,6 +54,15 @@ export function createScreenscriptOperatorRouter(
   router.post('/cancel', (_request, response) => {
     if (!available(response)) return;
     response.status(200).json(dependencies.service.cancelAuthLogin());
+  });
+
+  router.get('/usage', async (_request, response) => {
+    if (!available(response)) return;
+    try {
+      response.status(200).json(await dependencies.service.readRateLimits());
+    } catch {
+      response.status(502).json({ error: 'SCREENSCRIPT_AGENT_USAGE_FAILED' });
+    }
   });
 
   return router;
