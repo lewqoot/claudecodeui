@@ -10,6 +10,10 @@ const ALLOWED_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultra
 const MAX_EVIDENCE_FILES = 120;
 const MAX_EVIDENCE_FILE_BYTES = 3 * 1024 * 1024;
 const MAX_EVIDENCE_TOTAL_BYTES = 32 * 1024 * 1024;
+// Controller sessions of this dedicated profile are only resumed within a run's retention window
+// (at most three days of waiting plus a day of keeping), so older rollouts are safe to prune.
+const SESSION_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+const SESSION_PRUNE_EVERY_MS = 60 * 60 * 1000;
 
 const EVIDENCE_TYPES = new Map([
   ['image/jpeg', '.jpg'],
@@ -45,6 +49,7 @@ type ServiceDependencies = {
   runsRoot: string;
   codexHome: string;
   processEnvironment: NodeJS.ProcessEnv;
+  now?: () => number;
 };
 
 function exactChild(root: string, name: string): string {
@@ -96,10 +101,54 @@ function isolatedEnvironment(source: NodeJS.ProcessEnv, workspace: string, codex
 export function createScreenscriptAgentService(dependencies: ServiceDependencies) {
   const runsRoot = path.resolve(dependencies.runsRoot);
   const codexHome = path.resolve(dependencies.codexHome);
+  const now = dependencies.now ?? Date.now;
+  // One turn per run: a worker that retries after a lost connection must not start a second turn
+  // in the same Codex session while the first one is still stopping.
+  const activeTurns = new Set<string>();
+  let lastSessionPruneAt = 0;
 
-  return {
+  const pruneStaleSessions = async () => {
+    if (now() - lastSessionPruneAt < SESSION_PRUNE_EVERY_MS) return 0;
+    lastSessionPruneAt = now();
+    let removed = 0;
+    const walk = async (directory: string, depth: number): Promise<void> => {
+      let entries: import('node:fs').Dirent[];
+      try { entries = await dependencies.fileSystem.readdir(directory, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        const target = path.join(directory, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory() && depth < 3) await walk(target, depth + 1);
+        else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+          const info = await dependencies.fileSystem.stat(target).catch(() => null);
+          if (info && now() - info.mtimeMs > SESSION_RETENTION_MS) {
+            await dependencies.fileSystem.rm(target, { force: true }); removed += 1;
+          }
+        }
+      }
+    };
+    await walk(path.join(codexHome, 'sessions'), 0);
+    return removed;
+  };
+
+  const service = {
+    isRunBusy(runId: string): boolean {
+      return activeTurns.has(runId);
+    },
+    async listRuns(): Promise<Array<{ runId: string; modifiedAt: string | null; busy: boolean }>> {
+      let entries: import('node:fs').Dirent[];
+      try { entries = await dependencies.fileSystem.readdir(runsRoot, { withFileTypes: true }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+      const runs = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !RUN_ID_PATTERN.test(entry.name)) continue;
+        const info = await dependencies.fileSystem.stat(path.join(runsRoot, entry.name)).catch(() => null);
+        runs.push({ runId: entry.name, modifiedAt: info ? new Date(info.mtimeMs).toISOString() : null, busy: activeTurns.has(entry.name) });
+      }
+      return runs;
+    },
     async removeRun(runId: string): Promise<boolean> {
       if (!RUN_ID_PATTERN.test(runId)) throw new Error('SCREENSCRIPT_AGENT_REQUEST_INVALID');
+      if (activeTurns.has(runId)) throw new Error('SCREENSCRIPT_AGENT_RUN_BUSY');
       await dependencies.fileSystem.mkdir(runsRoot, { recursive: true, mode: 0o700 });
       const canonicalRunsRoot = await dependencies.fileSystem.realpath(runsRoot);
       const requestedWorkspace = exactChild(canonicalRunsRoot, runId);
@@ -112,12 +161,22 @@ export function createScreenscriptAgentService(dependencies: ServiceDependencies
       }
       if (workspace !== requestedWorkspace) throw new Error('SCREENSCRIPT_AGENT_WORKSPACE_SYMLINK_REFUSED');
       await dependencies.fileSystem.rm(workspace, { recursive: true, force: false });
+      await pruneStaleSessions().catch(() => 0);
       return true;
     },
-    async runTurn(input: TurnInput, writer: ProviderRuntimeWriter): Promise<void> {
+    async runTurn(input: TurnInput, writer: ProviderRuntimeWriter, options: { signal?: AbortSignal } = {}): Promise<void> {
       if (!RUN_ID_PATTERN.test(input.runId) || !input.message.trim() || input.message.length > 2_000_000) {
         throw new Error('SCREENSCRIPT_AGENT_REQUEST_INVALID');
       }
+      if (activeTurns.has(input.runId)) throw new Error('SCREENSCRIPT_AGENT_RUN_BUSY');
+      activeTurns.add(input.runId);
+      try {
+        await service.runLockedTurn(input, writer, options);
+      } finally {
+        activeTurns.delete(input.runId);
+      }
+    },
+    async runLockedTurn(input: TurnInput, writer: ProviderRuntimeWriter, options: { signal?: AbortSignal }): Promise<void> {
       if (input.sessionId && !SESSION_ID_PATTERN.test(input.sessionId)) {
         throw new Error('SCREENSCRIPT_AGENT_SESSION_INVALID');
       }
@@ -253,9 +312,11 @@ export function createScreenscriptAgentService(dependencies: ServiceDependencies
           permissions,
           'permissions.screenscript_agent.network.enabled=false',
         ],
+        abortSignal: options.signal,
       }, isolatedWriter);
       await checkpointWrite;
       if (checkpointFailure) throw checkpointFailure;
     },
   };
+  return service;
 }

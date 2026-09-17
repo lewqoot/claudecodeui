@@ -17,6 +17,8 @@ function service(overrides: Partial<RouterOptions['service']> = {}): RouterOptio
     startAuthLogin: async () => ({ phase: 'waiting', verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'ABCD-EFGH', expiresAt: 1, error: null }),
     runTurn: async () => undefined,
     removeRun: async () => false,
+    isRunBusy: () => false,
+    listRuns: async () => [],
     ...overrides,
   };
 }
@@ -145,5 +147,72 @@ test('ScreenScript route maps provider auth failures to a safe actionable code',
     const body = await response.text();
     assert.match(body, /SCREENSCRIPT_AGENT_CODEX_AUTH_INVALID/);
     assert.doesNotMatch(body, /internal provider details/);
+  });
+});
+
+test('a second turn for the same run is refused while the first one is still in flight', async () => {
+  await withServer({
+    enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret',
+    service: service({ isRunBusy: (runId) => runId === 'run-busy' }),
+  }, async (url) => {
+    const response = await fetch(url, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' },
+      body: JSON.stringify({ runId: 'run-busy', message: 'Return JSON', model: 'gpt-test' }),
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: 'SCREENSCRIPT_AGENT_RUN_BUSY' });
+  });
+});
+
+test('deleting a workspace whose turn is still stopping answers busy instead of removing it', async () => {
+  await withServer({
+    enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret',
+    service: service({ async removeRun() { throw new Error('SCREENSCRIPT_AGENT_RUN_BUSY'); } }),
+  }, async (url) => {
+    const response = await fetch(`${url}/run-busy`, { method: 'DELETE', headers: { 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' } });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: 'SCREENSCRIPT_AGENT_RUN_BUSY' });
+  });
+});
+
+test('the worker can list workspaces left behind so its janitor removes orphans', async () => {
+  await withServer({
+    enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret',
+    service: service({ async listRuns() { return [{ runId: 'ss2-old', modifiedAt: '2026-09-01T00:00:00.000Z', busy: false }]; } }),
+  }, async (url) => {
+    const unauthorized = await fetch(`${url}/runs`);
+    assert.equal(unauthorized.status, 403);
+    const response = await fetch(`${url}/runs`, { headers: { 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' } });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { runs: [{ runId: 'ss2-old', modifiedAt: '2026-09-01T00:00:00.000Z', busy: false }] });
+  });
+});
+
+test('a worker that disconnects stops the Codex turn it started', async () => {
+  let aborted: Promise<string> | null = null;
+  await withServer({
+    enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret',
+    service: service({
+      async runTurn(_input, writer, options) {
+        writer.send({ kind: 'status', text: 'started' });
+        aborted = new Promise<string>((resolve) => {
+          options?.signal?.addEventListener('abort', () => resolve('aborted'), { once: true });
+        });
+        await aborted;
+        writer.send({ kind: 'complete', success: false, exitCode: 1 });
+      },
+    }),
+  }, async (url) => {
+    const client = new AbortController();
+    const request = fetch(url, {
+      method: 'POST', signal: client.signal,
+      headers: { 'content-type': 'application/json', 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' },
+      body: JSON.stringify({ runId: 'run-1', message: 'Return JSON', model: 'gpt-test' }),
+    });
+    const response = await request;
+    const reader = response.body!.getReader();
+    await reader.read();
+    client.abort();
+    assert.equal(await aborted, 'aborted');
   });
 });

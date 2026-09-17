@@ -18,6 +18,8 @@ type ScreenscriptAgentService = {
     phase: string; verificationUrl: string | null; userCode: string | null; expiresAt: number | null; error: string | null;
   }>;
   removeRun(runId: string): Promise<boolean>;
+  isRunBusy(runId: string): boolean;
+  listRuns(): Promise<Array<{ runId: string; modifiedAt: string | null; busy: boolean }>>;
   runTurn(input: {
     runId: string;
     message: string;
@@ -25,7 +27,7 @@ type ScreenscriptAgentService = {
     effort?: string;
     sessionId?: string | null;
     evidence?: Array<{ id: string; mimeType: string; sha256: string; dataBase64: string }>;
-  }, writer: ProviderRuntimeWriter): Promise<void>;
+  }, writer: ProviderRuntimeWriter, options?: { signal?: AbortSignal }): Promise<void>;
 };
 
 type RouterDependencies = {
@@ -106,13 +108,24 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
     response.status(200).json(dependencies.service.cancelAuthLogin());
   });
 
+  // Workspaces the worker may still clean up; busy marks a run whose turn is in flight.
+  router.get('/runs', async (request, response) => {
+    if (!authorize(request, response)) return;
+    try {
+      response.status(200).json({ runs: await dependencies.service.listRuns() });
+    } catch {
+      response.status(502).json({ error: 'SCREENSCRIPT_AGENT_LIST_FAILED' });
+    }
+  });
+
   router.delete('/:runId', async (request, response) => {
     if (!authorize(request, response)) return;
     try {
       const removed = await dependencies.service.removeRun(request.params.runId);
       response.status(200).json({ removed });
     } catch (error) {
-      response.status(400).json({ error: error instanceof Error ? error.message : 'SCREENSCRIPT_AGENT_FAILED' });
+      const code = error instanceof Error ? error.message : 'SCREENSCRIPT_AGENT_FAILED';
+      response.status(code === 'SCREENSCRIPT_AGENT_RUN_BUSY' ? 409 : 400).json({ error: code });
     }
   });
 
@@ -124,6 +137,16 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
       || typeof request.body.model !== 'string') {
       return response.status(400).json({ error: 'SCREENSCRIPT_AGENT_REQUEST_INVALID' });
     }
+    if (dependencies.service.isRunBusy(request.body.runId)) {
+      return response.status(409).json({ error: 'SCREENSCRIPT_AGENT_RUN_BUSY' });
+    }
+
+    // The worker aborts its request when the run is cancelled, its budget ends or it restarts;
+    // the Codex turn must stop with it instead of running on for nobody.
+    const turnAbort = new AbortController();
+    response.on('close', () => {
+      if (!response.writableFinished) turnAbort.abort();
+    });
 
     response.setHeader('Content-Type', 'text/event-stream');
     response.setHeader('Cache-Control', 'no-cache, no-store');
@@ -153,7 +176,7 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
         effort: typeof request.body.effort === 'string' ? request.body.effort : undefined,
         sessionId: typeof request.body.sessionId === 'string' ? request.body.sessionId : null,
         evidence: Array.isArray(request.body.evidence) ? request.body.evidence : [],
-      }, writer);
+      }, writer, { signal: turnAbort.signal });
     } catch (error) {
       writer.send({
         kind: 'error',

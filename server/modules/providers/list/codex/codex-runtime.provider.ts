@@ -277,7 +277,10 @@ async function queryCodex(
     permissionMode = 'default',
     codexEnvironment,
     codexConfig,
-    codexConfigOverrides
+    codexConfigOverrides,
+    // Lets a caller that owns the request (the ScreenScript worker channel) stop the turn when its
+    // client disconnects, without knowing the provider session id.
+    abortSignal
   } = options;
 
   // Callers pass the stable app session id; the SDK resumes threads with the
@@ -309,6 +312,10 @@ async function queryCodex(
   // when the stream already reported the failure.
   let errorSurfaced = false;
   const abortController = new AbortController();
+  if (abortSignal instanceof AbortSignal) {
+    if (abortSignal.aborted) abortController.abort();
+    else abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+  }
   // Session-map key: the app session id when the caller supplied one, else
   // the provider-native thread id once captured (legacy/direct API callers).
   const sessionKey = () => sessionId || capturedSessionId || null;

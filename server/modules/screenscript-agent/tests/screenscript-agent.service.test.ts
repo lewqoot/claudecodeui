@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -98,4 +98,51 @@ test('ScreenScript service rejects traversal, bad hashes, unlisted models and mi
   await assert.rejects(() => service.runTurn({ ...valid, evidence: [{ id: 'frame', mimeType: 'image/jpeg', sha256: '0'.repeat(64), dataBase64: Buffer.from('bad').toString('base64') }] }, { send: () => undefined }), /EVIDENCE_INVALID/);
   await assert.rejects(() => service.runTurn(valid, { send: () => undefined }), /CODEX_AUTH_MISSING/);
   assert.equal(calls.length, 0);
+});
+
+test('ScreenScript service runs one turn per run, lists workspaces, forwards the stop signal and prunes old sessions', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'screenscript-agent-lock-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runsRoot = path.join(root, 'runs');
+  const codexHome = path.join(root, 'codex-home');
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(codexHome, 'auth.json'), '{}', { mode: 0o600 });
+  const sessionDirectory = path.join(codexHome, 'sessions', '2026', '09', '01');
+  await mkdir(sessionDirectory, { recursive: true });
+  const oldRollout = path.join(sessionDirectory, 'rollout-old.jsonl');
+  const freshRollout = path.join(sessionDirectory, 'rollout-fresh.jsonl');
+  await writeFile(oldRollout, '{}'); await writeFile(freshRollout, '{}');
+  const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+  await utimes(oldRollout, old, old);
+
+  let release: (() => void) | null = null;
+  let capturedSignal: AbortSignal | undefined;
+  const service = createScreenscriptAgentService({
+    fileSystem: await import('node:fs/promises'),
+    queryCodex: (async (_prompt, options, writer) => {
+      capturedSignal = options.abortSignal;
+      writer.setSessionId?.('session-lock');
+      await new Promise<void>((resolve) => { release = resolve; });
+      writer.send({ kind: 'complete', success: true, exitCode: 0 });
+    }) as ProviderRunFunction,
+    models: { getProviderModels: async () => ({ DEFAULT: 'gpt-test', OPTIONS: [{ value: 'gpt-test' }] }) },
+    runsRoot, codexHome, processEnvironment: { PATH: '/usr/bin:/bin' },
+  });
+
+  const controller = new AbortController();
+  const first = service.runTurn({ runId: 'run-lock', message: 'SCREENSCRIPT_MODE: agent_run\nGo.', model: 'gpt-test' }, { send: () => undefined }, { signal: controller.signal });
+  while (!capturedSignal) await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(service.isRunBusy('run-lock'), true);
+  await assert.rejects(() => service.runTurn({ runId: 'run-lock', message: 'Second turn', model: 'gpt-test' }, { send: () => undefined }), /SCREENSCRIPT_AGENT_RUN_BUSY/);
+  await assert.rejects(() => service.removeRun('run-lock'), /SCREENSCRIPT_AGENT_RUN_BUSY/);
+  assert.deepEqual((await service.listRuns()).map((run) => ({ runId: run.runId, busy: run.busy })), [{ runId: 'run-lock', busy: true }]);
+  controller.abort();
+  assert.equal(capturedSignal?.aborted, true, 'the provider turn receives the stop signal');
+  release!();
+  await first;
+  assert.equal(service.isRunBusy('run-lock'), false);
+
+  assert.equal(await service.removeRun('run-lock'), true);
+  await assert.rejects(() => access(oldRollout), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  await access(freshRollout);
 });
