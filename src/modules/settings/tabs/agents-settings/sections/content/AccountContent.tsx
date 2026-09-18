@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 
 import { Badge, Button, LLMProviderLogo } from '@/shared/ui';
 import type { AgentProvider, ProviderAuthStatus } from '@/shared/types';
-import ScreenScriptProductionAccountCard from '@/modules/settings/tabs/agents-settings/sections/content/ScreenScriptProductionAccountCard';
 import ScreenScriptRunsCard from '@/modules/settings/tabs/agents-settings/sections/content/ScreenScriptRunsCard';
 
 type AccountContentProps = {
@@ -146,12 +145,7 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
             </div>
           )}
 
-          {agent === 'codex' && (
-            <>
-              <ScreenScriptProductionAccountCard />
-              <ScreenScriptRunsCard />
-            </>
-          )}
+          {agent === 'codex' && <ScreenScriptRunsCard />}
         </div>
       </div>
     </div>

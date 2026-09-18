@@ -380,25 +380,9 @@
       "reLoginButton": "Re-login"
     },
     "error": "Error: {{error}}",
-    "screenscriptProduction": {
-      "title": "ScreenScript production account",
-      "description": "The isolated Codex profile that runs the ScreenScript production pipeline.",
-      "notSignedIn": "The dedicated production profile is not connected.",
-      "pauseConfirmation": "I confirm that active ScreenScript runs are paused. Replacing an account must not interrupt active work.",
-      "deviceStep": "Open the official OpenAI link and enter the one-time code.",
-      "openLogin": "Open OpenAI sign-in",
-      "switchAccount": "Switch production account",
-      "connectAccount": "Connect production account",
-      "cancelLogin": "Cancel sign-in",
-      "refreshStatus": "Refresh status",
-      "unknownError": "Could not check the production account.",
-      "usageTitle": "Plan limits",
-      "usageUnavailable": "Could not load plan limits.",
-      "usageResetsIn": "resets in {{time}}"
-    },
     "screenscriptRuns": {
       "title": "ScreenScript runs",
-      "description": "Live progress of the agent in the isolated production profile. This state lives in CloudCLI memory and is cleared on restart; durable data stays in Supabase and the ticket.",
+      "description": "Live progress of the agent while ScreenScript runs. This state lives in CloudCLI memory and is cleared on restart; durable data stays in Supabase and the ticket.",
       "empty": "No runs yet. They appear here as soon as the pipeline starts the agent.",
       "refresh": "Refresh",
       "runningCount": "active: {{count}}",

@@ -334,25 +334,9 @@
       "reLoginButton": "Войти снова"
     },
     "error": "Ошибка: {{error}}",
-    "screenscriptProduction": {
-      "title": "Production-аккаунт ScreenScript",
-      "description": "Отдельный изолированный Codex-профиль, которым управляется production-пайплайн ScreenScript.",
-      "notSignedIn": "Выделенный production-профиль не подключён.",
-      "pauseConfirmation": "Подтверждаю, что активные ScreenScript runs поставлены на паузу. Смена аккаунта не должна прерывать текущую работу.",
-      "deviceStep": "Откройте официальную ссылку OpenAI и введите одноразовый код.",
-      "openLogin": "Открыть вход OpenAI",
-      "switchAccount": "Сменить production-аккаунт",
-      "connectAccount": "Подключить production-аккаунт",
-      "cancelLogin": "Отменить вход",
-      "refreshStatus": "Обновить статус",
-      "unknownError": "Не удалось проверить production-аккаунт.",
-      "usageTitle": "Лимиты плана",
-      "usageUnavailable": "Не удалось загрузить лимиты плана.",
-      "usageResetsIn": "сброс через {{time}}"
-    },
     "screenscriptRuns": {
       "title": "Прогоны ScreenScript",
-      "description": "Живой ход агента в изолированном production-профиле. Состояние живёт в памяти CloudCLI и очищается при перезапуске сервиса; постоянные данные остаются в Supabase и тикете.",
+      "description": "Живой ход агента во время прогонов ScreenScript. Состояние живёт в памяти CloudCLI и очищается при перезапуске сервиса; постоянные данные остаются в Supabase и тикете.",
       "empty": "Прогонов пока нет. Они появятся здесь, как только пайплайн запустит агента.",
       "refresh": "Обновить",
       "runningCount": "активных: {{count}}",
