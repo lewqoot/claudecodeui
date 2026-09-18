@@ -6,18 +6,21 @@ import { createScreenscriptRunProjectsService } from '../screenscript-run-projec
 
 const RUNS_ROOT = '/data/workspaces/screenscript-agent-runs';
 
-type ProjectRow = { isArchived: boolean };
+type ProjectRow = { isArchived: boolean; custom_project_name?: string | null };
 
 function harness(overrides: {
   enabled?: boolean;
   rows?: Map<string, ProjectRow>;
   created?: Array<{ path: string; name: string }>;
+  renames?: Array<{ path: string; name: string }>;
   failCreate?: boolean;
   failArchive?: boolean;
+  failRename?: boolean;
   runIds?: string[];
 } = {}) {
   const rows = overrides.rows ?? new Map<string, ProjectRow>();
   const created = overrides.created ?? [];
+  const renames = overrides.renames ?? [];
   const service = createScreenscriptRunProjectsService({
     runsRoot: RUNS_ROOT,
     enabled: overrides.enabled ?? true,
@@ -25,7 +28,13 @@ function harness(overrides: {
     createRunProject: async (projectPath, customName) => {
       if (overrides.failCreate) throw new Error('workspace registration exploded');
       created.push({ path: projectPath, name: customName });
-      rows.set(projectPath, { isArchived: false });
+      rows.set(projectPath, { isArchived: false, custom_project_name: customName });
+    },
+    renameProjectByPath: (projectPath, customName) => {
+      if (overrides.failRename) throw new Error('project rename exploded');
+      renames.push({ path: projectPath, name: customName });
+      const row = rows.get(projectPath);
+      if (row) row.custom_project_name = customName;
     },
     archiveProjectByPath: (projectPath, isArchived) => {
       if (overrides.failArchive) throw new Error('project table closed');
@@ -34,7 +43,7 @@ function harness(overrides: {
     },
     listRunIds: async () => overrides.runIds ?? [],
   });
-  return { service, rows, created };
+  return { service, rows, created, renames };
 }
 
 test('run projects service registers a run workspace once, named after the run', async () => {
@@ -89,4 +98,44 @@ test('run projects service does nothing while the ScreenScript channel is disabl
 
   assert.equal(await service.registerExistingRunProjects(), 0);
   assert.deepEqual(created, []);
+});
+
+test('run projects service labels a new run folder with the Jira ticket', async () => {
+  const { service, created } = harness();
+
+  await service.ensureRunProject('ss2-alpha', 'gagappq-26');
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].name, 'GAGAPPQ-26 · ss2-alpha');
+});
+
+test('run projects service relabels a run folder registered before the ticket was known', async () => {
+  const projectPath = path.join(RUNS_ROOT, 'ss2-alpha');
+  const { service, created, renames } = harness({
+    rows: new Map([[projectPath, { isArchived: false, custom_project_name: 'ScreenScript · ss2-alpha' }]]),
+  });
+
+  await service.ensureRunProject('ss2-alpha', 'GAGAPPQ-26');
+
+  assert.equal(created.length, 0);
+  assert.deepEqual(renames, [{ path: projectPath, name: 'GAGAPPQ-26 · ss2-alpha' }]);
+});
+
+test('run projects service falls back to the run id when the ticket is not a Jira key', async () => {
+  const { service, created, renames } = harness();
+
+  await service.ensureRunProject('ss2-zeta', 'not a ticket');
+
+  assert.deepEqual(created.map((entry) => entry.name), ['ScreenScript · ss2-zeta']);
+  assert.deepEqual(renames, []);
+});
+
+test('run projects service survives a broken project rename without touching the turn', async () => {
+  const projectPath = path.join(RUNS_ROOT, 'ss2-eta');
+  const { service } = harness({
+    rows: new Map([[projectPath, { isArchived: false, custom_project_name: 'ScreenScript · ss2-eta' }]]),
+    failRename: true,
+  });
+
+  await service.ensureRunProject('ss2-eta', 'GAGAPPQ-26');
 });

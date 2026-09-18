@@ -154,10 +154,15 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
     // worker keeps receiving the stream unchanged.
     dependencies.runs.beginRun({ runId: request.body.runId, model: request.body.model });
     // Registering the workspace as a project is what makes the run show up as a
-    // folder in the sidebar while it works. It is a convenience projection, so a
-    // failure here must never keep the worker's turn from starting.
+    // folder in the sidebar while it works. The optional `ticket` is the Jira
+    // key the worker already works on, and it is what labels that folder. It is
+    // a convenience projection, so a failure here must never keep the worker's
+    // turn from starting.
     try {
-      await dependencies.runProjects.ensureRunProject(request.body.runId);
+      await dependencies.runProjects.ensureRunProject(
+        request.body.runId,
+        typeof request.body.ticket === 'string' ? request.body.ticket : null,
+      );
     } catch (error) {
       console.warn('[Screenscript] Run project registration failed', {
         runId: request.body.runId,

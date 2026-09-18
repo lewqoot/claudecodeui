@@ -296,3 +296,22 @@ test('ScreenScript route still runs the turn when the run folder cannot be regis
     assert.match(await response.text(), /готово/);
   });
 });
+
+test('ScreenScript route forwards the Jira ticket so the sidebar can label the run', async () => {
+  const registered: Array<[string, string | null | undefined]> = [];
+  await withServer({
+    enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret',
+    runProjects: runProjects({ async ensureRunProject(runId, ticket) { registered.push([runId, ticket]); } }),
+    service: service(),
+  }, async (url) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' },
+      body: JSON.stringify({ runId: 'run-13', message: 'SCREENSCRIPT_MODE: agent_run', model: 'gpt-test', ticket: 'gagappq-26' }),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+  });
+
+  assert.deepEqual(registered, [['run-13', 'gagappq-26']]);
+});
