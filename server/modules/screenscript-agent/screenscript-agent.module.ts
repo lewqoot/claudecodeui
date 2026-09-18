@@ -8,6 +8,7 @@ import { createScreenscriptAgentAuthService } from './screenscript-agent-auth.se
 import { createScreenscriptAgentService } from './screenscript-agent.service.js';
 import { createScreenscriptAgentUsageService } from './screenscript-agent-usage.service.js';
 import { createScreenscriptOperatorRouter } from './screenscript-operator.routes.js';
+import { createScreenscriptRunRegistry } from './screenscript-run-registry.js';
 
 type ModuleDependencies = {
   queryCodex: ProviderRunFunction;
@@ -16,7 +17,8 @@ type ModuleDependencies = {
 
 /**
  * Assembles the private worker channel and the separately authenticated
- * CloudCLI Settings recovery surface for the server entrypoint.
+ * CloudCLI Settings surfaces for the server entrypoint: account recovery, plan
+ * limits and the live run feed, which share one in-process run registry.
  */
 export function createScreenscriptAgentModule(dependencies: ModuleDependencies) {
   const environment = dependencies.environment ?? process.env;
@@ -47,15 +49,18 @@ export function createScreenscriptAgentModule(dependencies: ModuleDependencies) 
     processEnvironment: environment,
   });
   const channelEnabled = enabled && Boolean(apiSecret) && Boolean(channelSecret);
+  const runs = createScreenscriptRunRegistry();
   return {
     workerRouter: createScreenscriptAgentRouter({
       enabled: channelEnabled,
       apiSecret,
       channelSecret,
+      runs,
       service: { ...service, ...authService },
     }),
     operatorRouter: createScreenscriptOperatorRouter({
       enabled: channelEnabled,
+      runs,
       service: { ...authService, ...usageService },
     }),
   };

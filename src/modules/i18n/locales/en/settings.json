@@ -395,6 +395,25 @@
       "usageTitle": "Plan limits",
       "usageUnavailable": "Could not load plan limits.",
       "usageResetsIn": "resets in {{time}}"
+    },
+    "screenscriptRuns": {
+      "title": "ScreenScript runs",
+      "description": "Live progress of the agent in the isolated production profile. This state lives in CloudCLI memory and is cleared on restart; durable data stays in Supabase and the ticket.",
+      "empty": "No runs yet. They appear here as soon as the pipeline starts the agent.",
+      "refresh": "Refresh",
+      "runningCount": "active: {{count}}",
+      "running": "running",
+      "completed": "completed",
+      "failed": "failed",
+      "eventCount": "events: {{count}}",
+      "session": "session {{id}}",
+      "truncated": "older events hidden",
+      "waiting": "Waiting for events…",
+      "streamLive": "streaming live",
+      "streamEnded": "stream finished",
+      "streamUnavailable": "Stream unavailable — press Refresh.",
+      "raw": "raw event",
+      "unknownError": "Could not load runs."
     }
   },
   "permissions": {

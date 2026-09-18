@@ -467,15 +467,21 @@ export const api = {
     deleteDraft: (scope: string) => del('/api/user/drafts', { scope }),
   },
 
-  // The Settings-only ScreenScript account surface is authenticated as the
-  // CloudCLI owner. Worker-channel keys stay on the server and are never sent
-  // to this browser client.
+  // The Settings-only ScreenScript surfaces are authenticated as the CloudCLI
+  // owner. Worker-channel keys stay on the server and are never sent to this
+  // browser client.
   screenscriptOperator: {
     account: () => get('/api/screenscript-operator/account'),
     progress: () => get('/api/screenscript-operator/progress'),
     start: () => post('/api/screenscript-operator/start', { confirmPausedRuns: true }),
     cancel: () => post('/api/screenscript-operator/cancel'),
     usage: () => get('/api/screenscript-operator/usage'),
+    runs: () => get('/api/screenscript-operator/runs'),
+    run: (runId: string) => get(`/api/screenscript-operator/runs/${encodeURIComponent(runId)}`),
+    // EventSource cannot send headers, so the run stream authenticates with the
+    // same query-param token the conversation search stream already uses.
+    runStreamUrl: (runId: string) =>
+      `/api/screenscript-operator/runs/${encodeURIComponent(runId)}/stream${query({ token: getStoredAuthToken() })}`,
   },
 
   // Server-side settings: API keys, stored credentials, notifications, web push

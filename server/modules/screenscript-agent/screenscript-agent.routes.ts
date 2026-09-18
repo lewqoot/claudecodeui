@@ -4,6 +4,9 @@ import express from 'express';
 
 import type { ProviderRuntimeWriter } from '@/shared/index.js';
 
+import { publicAgentErrorCode } from './screenscript-agent-errors.js';
+import type { ScreenscriptRunRegistry } from './screenscript-run-registry.js';
+
 type ScreenscriptAgentService = {
   authProgress(): {
     phase: string; verificationUrl: string | null; userCode: string | null; expiresAt: number | null; error: string | null;
@@ -33,6 +36,11 @@ type RouterDependencies = {
   apiSecret: string;
   channelSecret: string;
   service: ScreenscriptAgentService;
+  /**
+   * Live feed of the turns this channel executes; the CloudCLI operator screen
+   * reads the same registry, so recording here is what makes a run visible.
+   */
+  runs: Pick<ScreenscriptRunRegistry, 'beginRun' | 'recordWriter' | 'endRun' | 'forgetRun'>;
 };
 
 function sameSecret(presented: unknown, expected: string): boolean {
@@ -40,18 +48,6 @@ function sameSecret(presented: unknown, expected: string): boolean {
   const left = Buffer.from(presented);
   const right = Buffer.from(expected);
   return left.length === right.length && timingSafeEqual(left, right);
-}
-
-function publicAgentErrorCode(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/^SCREENSCRIPT_AGENT_[A-Z0-9_]+$/.test(message)) return message;
-  if (/token_revoked|not logged in|login required|unauthori[sz]ed|\b401\b/i.test(message)) {
-    return 'SCREENSCRIPT_AGENT_CODEX_AUTH_INVALID';
-  }
-  if (/usage limit|rate limit|quota|too many requests|\b429\b/i.test(message)) {
-    return 'SCREENSCRIPT_AGENT_CODEX_LIMIT_REACHED';
-  }
-  return 'SCREENSCRIPT_AGENT_FAILED';
 }
 
 /**
@@ -110,6 +106,7 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
     if (!authorize(request, response)) return;
     try {
       const removed = await dependencies.service.removeRun(request.params.runId);
+      if (removed) dependencies.runs.forgetRun(request.params.runId);
       response.status(200).json({ removed });
     } catch (error) {
       response.status(400).json({ error: error instanceof Error ? error.message : 'SCREENSCRIPT_AGENT_FAILED' });
@@ -144,7 +141,12 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
         }
       },
     };
+    // The operator screen watches the same turn through this registry; the
+    // worker keeps receiving the stream unchanged.
+    dependencies.runs.beginRun({ runId: request.body.runId, model: request.body.model });
+    const recordingWriter = dependencies.runs.recordWriter(request.body.runId, writer);
 
+    let failure: unknown = null;
     try {
       await dependencies.service.runTurn({
         runId: request.body.runId,
@@ -153,16 +155,21 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
         effort: typeof request.body.effort === 'string' ? request.body.effort : undefined,
         sessionId: typeof request.body.sessionId === 'string' ? request.body.sessionId : null,
         evidence: Array.isArray(request.body.evidence) ? request.body.evidence : [],
-      }, writer);
+      }, recordingWriter);
     } catch (error) {
-      writer.send({
+      failure = error;
+      recordingWriter.send({
         kind: 'error',
         role: 'error',
         content: publicAgentErrorCode(error),
       });
-      writer.send({ kind: 'complete', success: false, exitCode: 1 });
+      recordingWriter.send({ kind: 'complete', success: false, exitCode: 1 });
     } finally {
-      writer.end();
+      dependencies.runs.endRun(request.body.runId, {
+        ok: failure === null,
+        errorCode: failure === null ? null : publicAgentErrorCode(failure),
+      });
+      recordingWriter.end();
     }
   });
 

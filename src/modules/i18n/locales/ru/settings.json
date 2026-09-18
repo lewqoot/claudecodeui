@@ -349,6 +349,25 @@
       "usageTitle": "Лимиты плана",
       "usageUnavailable": "Не удалось загрузить лимиты плана.",
       "usageResetsIn": "сброс через {{time}}"
+    },
+    "screenscriptRuns": {
+      "title": "Прогоны ScreenScript",
+      "description": "Живой ход агента в изолированном production-профиле. Состояние живёт в памяти CloudCLI и очищается при перезапуске сервиса; постоянные данные остаются в Supabase и тикете.",
+      "empty": "Прогонов пока нет. Они появятся здесь, как только пайплайн запустит агента.",
+      "refresh": "Обновить",
+      "runningCount": "активных: {{count}}",
+      "running": "идёт",
+      "completed": "завершён",
+      "failed": "ошибка",
+      "eventCount": "событий: {{count}}",
+      "session": "сессия {{id}}",
+      "truncated": "старые события скрыты",
+      "waiting": "Ожидание событий…",
+      "streamLive": "поток идёт в реальном времени",
+      "streamEnded": "поток завершён",
+      "streamUnavailable": "Поток недоступен — нажмите «Обновить».",
+      "raw": "сырое событие",
+      "unknownError": "Не удалось загрузить прогоны."
     }
   },
   "permissions": {
