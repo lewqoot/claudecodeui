@@ -1,4 +1,3 @@
-import os from 'node:os';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 
@@ -12,6 +11,8 @@ import {
 } from '@/shared/utils.js';
 import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
 
+import { codexHomeForFile, codexHomes } from './codex-homes.js';
+
 type ParsedSession = {
   sessionId: string;
   projectPath: string;
@@ -20,24 +21,31 @@ type ParsedSession = {
 
 /**
  * Session indexer for Codex transcript artifacts.
+ *
+ * Besides `~/.codex` it indexes every profile named in `CODEX_ADDITIONAL_HOMES`,
+ * which is how an isolated profile's conversations (the ScreenScript agent runs)
+ * reach the sidebar.
  */
 export class CodexSessionSynchronizer implements IProviderSessionSynchronizer {
   private readonly provider = 'codex' as const;
-  private readonly codexHome = path.join(os.homedir(), '.codex');
 
   /**
-   * Scans ~/.codex/sessions and upserts discovered sessions into DB.
+   * Scans every configured profile's `sessions` tree and upserts discovered
+   * sessions into DB.
    */
   async synchronize(since?: Date): Promise<number> {
-    const nameMap = await buildLookupMap(path.join(this.codexHome, 'session_index.jsonl'), 'id', 'thread_name');
-    const files = await findFilesRecursivelyCreatedAfter(
-      path.join(this.codexHome, 'sessions'),
-      '.jsonl',
-      since ?? null
-    );
+    const nameMaps = new Map<string, Map<string, string>>();
+    const files = new Set<string>();
+    for (const home of codexHomes()) {
+      nameMaps.set(home, await buildLookupMap(path.join(home, 'session_index.jsonl'), 'id', 'thread_name'));
+      for (const filePath of await findFilesRecursivelyCreatedAfter(path.join(home, 'sessions'), '.jsonl', since ?? null)) {
+        files.add(filePath);
+      }
+    }
 
     let processed = 0;
     for (const filePath of files) {
+      const nameMap = nameMaps.get(codexHomeForFile(filePath)) ?? new Map<string, string>();
       const parsed = await this.processSessionFile(filePath, nameMap);
       if (!parsed) {
         continue;
@@ -76,7 +84,11 @@ export class CodexSessionSynchronizer implements IProviderSessionSynchronizer {
       return null;
     }
 
-    const nameMap = await buildLookupMap(path.join(this.codexHome, 'session_index.jsonl'), 'id', 'thread_name');
+    const nameMap = await buildLookupMap(
+      path.join(codexHomeForFile(filePath), 'session_index.jsonl'),
+      'id',
+      'thread_name'
+    );
     const parsed = await this.processSessionFile(filePath, nameMap);
     if (!parsed) {
       return null;

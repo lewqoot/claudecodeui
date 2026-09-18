@@ -5,6 +5,7 @@ import { promises as fsPromises } from 'node:fs';
 import chokidar, { type FSWatcher } from 'chokidar';
 
 import { sessionSynchronizerService } from '@/modules/providers/services/session-synchronizer.service.js';
+import { codexHomes } from '@/modules/providers/list/codex/codex-homes.js';
 import { broadcastSessionUpsertedBatch } from '@/modules/websocket/index.js';
 import type { LLMProvider } from '@/shared/types.js';
 
@@ -27,6 +28,11 @@ const PROVIDER_WATCH_PATHS: Array<{ provider: LLMProvider; rootPath: string }> =
     provider: 'opencode',
     rootPath: path.join(os.homedir(), '.local', 'share', 'opencode'),
   },
+  // Extra Codex profiles (for example the isolated ScreenScript agent profile)
+  // are watched too, so a run's conversation fills in while the agent works.
+  ...codexHomes()
+    .filter((home) => home !== path.join(os.homedir(), '.codex'))
+    .map((home) => ({ provider: 'codex' as const, rootPath: path.join(home, 'sessions') })),
 ];
 
 const WATCHER_IGNORED_PATTERNS = [

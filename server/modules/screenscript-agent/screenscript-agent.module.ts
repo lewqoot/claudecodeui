@@ -8,6 +8,7 @@ import { createScreenscriptAgentAuthService } from './screenscript-agent-auth.se
 import { createScreenscriptAgentService } from './screenscript-agent.service.js';
 import { createScreenscriptAgentUsageService } from './screenscript-agent-usage.service.js';
 import { createScreenscriptOperatorRouter } from './screenscript-operator.routes.js';
+import { createScreenscriptRunProjectsService } from './screenscript-run-projects.service.js';
 import { createScreenscriptRunRegistry } from './screenscript-run-registry.js';
 
 type ModuleDependencies = {
@@ -50,12 +51,14 @@ export function createScreenscriptAgentModule(dependencies: ModuleDependencies) 
   });
   const channelEnabled = enabled && Boolean(apiSecret) && Boolean(channelSecret);
   const runs = createScreenscriptRunRegistry();
+  const runProjects = createScreenscriptRunProjectsService({ runsRoot, enabled: channelEnabled });
   return {
     workerRouter: createScreenscriptAgentRouter({
       enabled: channelEnabled,
       apiSecret,
       channelSecret,
       runs,
+      runProjects,
       service: { ...service, ...authService },
     }),
     operatorRouter: createScreenscriptOperatorRouter({
@@ -63,5 +66,10 @@ export function createScreenscriptAgentModule(dependencies: ModuleDependencies) 
       runs,
       service: { ...authService, ...usageService },
     }),
+    /**
+     * Called once the database is ready: run folders that already exist on disk
+     * (older runs, or runs that survived a restart) become sidebar projects.
+     */
+    registerExistingRunProjects: () => runProjects.registerExistingRunProjects(),
   };
 }

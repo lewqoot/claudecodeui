@@ -22,14 +22,29 @@ function service(overrides: Partial<RouterOptions['service']> = {}): RouterOptio
   };
 }
 
+function runProjects(overrides: Partial<RouterOptions['runProjects']> = {}): RouterOptions['runProjects'] {
+  return {
+    ensureRunProject: async () => undefined,
+    archiveRunProject: () => undefined,
+    ...overrides,
+  };
+}
+
 async function withServer(
-  options: Omit<RouterOptions, 'runs'> & { runs?: RouterOptions['runs'] },
+  options: Omit<RouterOptions, 'runs' | 'runProjects'> & {
+    runs?: RouterOptions['runs'];
+    runProjects?: RouterOptions['runProjects'];
+  },
   run: (url: string) => Promise<void>,
 ) {
-  const { runs: providedRuns, ...rest } = options;
+  const { runs: providedRuns, runProjects: providedRunProjects, ...rest } = options;
   const app = express();
   app.use(express.json());
-  app.use('/api/screenscript-agent', createScreenscriptAgentRouter({ runs: providedRuns ?? createScreenscriptRunRegistry(), ...rest }));
+  app.use('/api/screenscript-agent', createScreenscriptAgentRouter({
+    runs: providedRuns ?? createScreenscriptRunRegistry(),
+    runProjects: providedRunProjects ?? runProjects(),
+    ...rest,
+  }));
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
@@ -229,4 +244,55 @@ test('ScreenScript route drops the run from the registry when its workspace is r
     assert.deepEqual(await response.json(), { removed: true });
   });
   assert.deepEqual(registry.listRuns(), []);
+});
+
+test('ScreenScript route registers the run folder for the sidebar and archives it on removal', async () => {
+  const registered: string[] = [];
+  const archived: string[] = [];
+  await withServer({
+    enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret',
+    runProjects: runProjects({
+      async ensureRunProject(runId) { registered.push(runId); },
+      archiveRunProject(runId) { archived.push(runId); },
+    }),
+    service: service({ async removeRun() { return true; } }),
+  }, async (url) => {
+    const headers = { 'content-type': 'application/json', 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' };
+    const started = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ runId: 'run-11', message: 'SCREENSCRIPT_MODE: agent_run', model: 'gpt-test' }),
+    });
+    assert.equal(started.status, 200);
+    await started.text();
+
+    const removed = await fetch(`${url}/run-11`, {
+      method: 'DELETE',
+      headers: { 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' },
+    });
+    assert.equal(removed.status, 200);
+  });
+
+  assert.deepEqual(registered, ['run-11']);
+  assert.deepEqual(archived, ['run-11']);
+});
+
+test('ScreenScript route still runs the turn when the run folder cannot be registered', async () => {
+  await withServer({
+    enabled: true, apiSecret: 'api-secret', channelSecret: 'channel-secret',
+    runProjects: runProjects({ async ensureRunProject() { throw new Error('registration exploded'); } }),
+    service: service({
+      async runTurn(_input, writer) {
+        writer.send({ kind: 'text', role: 'assistant', content: 'готово' });
+      },
+    }),
+  }, async (url) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'api-secret', 'x-screenscript-agent-key': 'channel-secret' },
+      body: JSON.stringify({ runId: 'run-12', message: 'SCREENSCRIPT_MODE: agent_run', model: 'gpt-test' }),
+    });
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /готово/);
+  });
 });

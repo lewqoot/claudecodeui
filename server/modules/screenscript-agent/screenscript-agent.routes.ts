@@ -5,6 +5,7 @@ import express from 'express';
 import type { ProviderRuntimeWriter } from '@/shared/index.js';
 
 import { publicAgentErrorCode } from './screenscript-agent-errors.js';
+import type { ScreenscriptRunProjects } from './screenscript-run-projects.service.js';
 import type { ScreenscriptRunRegistry } from './screenscript-run-registry.js';
 
 type ScreenscriptAgentService = {
@@ -41,6 +42,11 @@ type RouterDependencies = {
    * reads the same registry, so recording here is what makes a run visible.
    */
   runs: Pick<ScreenscriptRunRegistry, 'beginRun' | 'recordWriter' | 'endRun' | 'forgetRun'>;
+  /**
+   * Registers the run workspace as a CloudCLI project, which is what puts the
+   * run folder (and later its conversation) into the sidebar.
+   */
+  runProjects: Pick<ScreenscriptRunProjects, 'ensureRunProject' | 'archiveRunProject'>;
 };
 
 function sameSecret(presented: unknown, expected: string): boolean {
@@ -106,7 +112,10 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
     if (!authorize(request, response)) return;
     try {
       const removed = await dependencies.service.removeRun(request.params.runId);
-      if (removed) dependencies.runs.forgetRun(request.params.runId);
+      if (removed) {
+        dependencies.runs.forgetRun(request.params.runId);
+        dependencies.runProjects.archiveRunProject(request.params.runId);
+      }
       response.status(200).json({ removed });
     } catch (error) {
       response.status(400).json({ error: error instanceof Error ? error.message : 'SCREENSCRIPT_AGENT_FAILED' });
@@ -144,6 +153,17 @@ export function createScreenscriptAgentRouter(dependencies: RouterDependencies):
     // The operator screen watches the same turn through this registry; the
     // worker keeps receiving the stream unchanged.
     dependencies.runs.beginRun({ runId: request.body.runId, model: request.body.model });
+    // Registering the workspace as a project is what makes the run show up as a
+    // folder in the sidebar while it works. It is a convenience projection, so a
+    // failure here must never keep the worker's turn from starting.
+    try {
+      await dependencies.runProjects.ensureRunProject(request.body.runId);
+    } catch (error) {
+      console.warn('[Screenscript] Run project registration failed', {
+        runId: request.body.runId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     const recordingWriter = dependencies.runs.recordWriter(request.body.runId, writer);
 
     let failure: unknown = null;

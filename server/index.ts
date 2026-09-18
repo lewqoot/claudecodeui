@@ -339,6 +339,13 @@ async function startServer() {
         // Initialize authentication database
         await initializeDatabase();
 
+        // Surface run folders that already exist on disk in the sidebar. This is
+        // a convenience projection of the runs root onto projects, so a failure
+        // must not stop the server from starting.
+        await screenscriptAgentModule.registerExistingRunProjects().catch((error) => {
+            console.warn('[WARN] Could not register existing ScreenScript runs:', error.message);
+        });
+
         // Configure Web Push (VAPID keys)
         configureWebPush();
 
