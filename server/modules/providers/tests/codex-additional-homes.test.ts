@@ -140,3 +140,35 @@ test('Codex synchronizer keeps the default profile when no extra homes are confi
     await rm(defaultHome, { recursive: true, force: true });
   }
 });
+
+test('Codex synchronizer reads a newly configured profile in full despite the global scan cursor', { concurrency: false }, async () => {
+  const defaultHome = await mkdtemp(path.join(os.tmpdir(), 'codex-home-default-'));
+  const agentHome = await mkdtemp(path.join(os.tmpdir(), 'codex-home-agent-'));
+  const workspacePath = path.join(defaultHome, 'workspaces', 'screenscript-agent-runs', 'ss2-run-3');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(defaultHome);
+  const previousAdditionalHomes = process.env.CODEX_ADDITIONAL_HOMES;
+  process.env.CODEX_ADDITIONAL_HOMES = agentHome;
+
+  try {
+    await writeRollout(agentHome, 'codex-agent-3', workspacePath);
+    await withIsolatedDatabase(async () => {
+      const synchronizer = new CodexSessionSynchronizer();
+      // A cursor that already sits past the transcript must not hide a profile
+      // the process is seeing for the first time.
+      assert.equal(await synchronizer.synchronize(new Date(Date.now() + 60_000)), 1);
+      assert.equal(sessionsDb.getSessionById('codex-agent-3')?.project_path, workspacePath);
+      // Later passes respect the cursor again instead of re-reading the profile.
+      assert.equal(await synchronizer.synchronize(new Date(Date.now() + 120_000)), 0);
+    });
+  } finally {
+    if (previousAdditionalHomes === undefined) {
+      delete process.env.CODEX_ADDITIONAL_HOMES;
+    } else {
+      process.env.CODEX_ADDITIONAL_HOMES = previousAdditionalHomes;
+    }
+    restoreHomeDir();
+    await rm(defaultHome, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
+  }
+});

@@ -11,13 +11,24 @@ import {
 } from '@/shared/utils.js';
 import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
 
-import { codexHomeForFile, codexHomes } from './codex-homes.js';
+import { codexHomeForFile, codexHomes, defaultCodexHome } from './codex-homes.js';
 
 type ParsedSession = {
   sessionId: string;
   projectPath: string;
   sessionName?: string;
 };
+
+/**
+ * Extra homes whose transcripts have already had their first full pass in this
+ * process.
+ *
+ * `scan_state.last_scanned_at` is a single global cursor, so an extra profile
+ * configured later would be skipped up to "now" and its existing conversations
+ * would stay invisible forever. The first pass over an extra home therefore
+ * ignores the cursor; the default home keeps its incremental behaviour.
+ */
+const scannedExtraHomes = new Set<string>();
 
 /**
  * Session indexer for Codex transcript artifacts.
@@ -36,9 +47,13 @@ export class CodexSessionSynchronizer implements IProviderSessionSynchronizer {
   async synchronize(since?: Date): Promise<number> {
     const nameMaps = new Map<string, Map<string, string>>();
     const files = new Set<string>();
+    const defaultHome = defaultCodexHome();
     for (const home of codexHomes()) {
       nameMaps.set(home, await buildLookupMap(path.join(home, 'session_index.jsonl'), 'id', 'thread_name'));
-      for (const filePath of await findFilesRecursivelyCreatedAfter(path.join(home, 'sessions'), '.jsonl', since ?? null)) {
+      const firstPassOnExtraHome = home !== defaultHome && !scannedExtraHomes.has(home);
+      scannedExtraHomes.add(home);
+      const sinceForHome = firstPassOnExtraHome ? null : (since ?? null);
+      for (const filePath of await findFilesRecursivelyCreatedAfter(path.join(home, 'sessions'), '.jsonl', sinceForHome)) {
         files.add(filePath);
       }
     }
