@@ -20,6 +20,7 @@ test('ScreenScript service materializes verified images and applies the isolated
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   let capturedPrompt = '';
   let capturedOptions: Record<string, any> = {};
+  const recordedModels: Array<{ sessionId: string; model: string; effort?: string }> = [];
 
   const service = createScreenscriptAgentService({
     fileSystem: await import('node:fs/promises'),
@@ -33,6 +34,7 @@ test('ScreenScript service materializes verified images and applies the isolated
     runsRoot,
     codexHome,
     processEnvironment: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', GOOGLE_API_KEY: 'must-not-leak' },
+    recordSessionModel: (value) => { recordedModels.push(value); },
   });
 
   await service.runTurn({
@@ -65,6 +67,7 @@ test('ScreenScript service materializes verified images and applies the isolated
     JSON.parse(await readFile(path.join(await realpath(runsRoot), 'run-123', 'controller-session.json'), 'utf8')),
     { run_id: 'run-123', session_id: 'session-1', model: 'gpt-test' },
   );
+  assert.deepEqual(recordedModels, [{ sessionId: 'session-1', model: 'gpt-test', effort: 'high' }]);
 
   await service.runTurn({
     runId: 'run-123', message: 'SCREENSCRIPT_MODE: agent_run\nContinue.', model: 'gpt-test', sessionId: 'session-1', evidence: [],
@@ -98,4 +101,40 @@ test('ScreenScript service rejects traversal, bad hashes, unlisted models and mi
   await assert.rejects(() => service.runTurn({ ...valid, evidence: [{ id: 'frame', mimeType: 'image/jpeg', sha256: '0'.repeat(64), dataBase64: Buffer.from('bad').toString('base64') }] }, { send: () => undefined }), /EVIDENCE_INVALID/);
   await assert.rejects(() => service.runTurn(valid, { send: () => undefined }), /CODEX_AUTH_MISSING/);
   assert.equal(calls.length, 0);
+});
+
+test('ScreenScript service labels a provider-stage session with the model it ran on', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'screenscript-agent-provider-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runsRoot = path.join(root, 'runs');
+  const codexHome = path.join(root, 'codex-home');
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(codexHome, 'auth.json'), '{}', { mode: 0o600 });
+  const recorded: Array<{ sessionId: string; model: string; effort?: string }> = [];
+  const service = createScreenscriptAgentService({
+    fileSystem: await import('node:fs/promises'),
+    queryCodex: (async (_prompt: unknown, _options: unknown, writer: any) => {
+      writer.send({ kind: 'text', role: 'assistant', content: '{"passed":true}', sessionId: 'provider-session-9' });
+      writer.send({ kind: 'complete', success: true, exitCode: 0 });
+    }) as ProviderRunFunction,
+    models: { getProviderModels: async () => ({ DEFAULT: 'gpt-5.6-sol', OPTIONS: [{ value: 'gpt-5.6-sol' }] }) },
+    runsRoot,
+    codexHome,
+    processEnvironment: { PATH: '/usr/bin:/bin' },
+    recordSessionModel: (value) => { recorded.push(value); },
+  });
+
+  await service.runTurn({
+    runId: 'run-999',
+    message: 'SCREENSCRIPT_MODE: provider_stage\nSTAGE: mapper\nReturn JSON.',
+    model: 'gpt-5.6-sol',
+    effort: 'xhigh',
+  }, { send: () => undefined });
+
+  assert.deepEqual(recorded, [{ sessionId: 'provider-session-9', model: 'gpt-5.6-sol', effort: 'xhigh' }]);
+  const canonicalRunsRoot = await realpath(runsRoot);
+  await assert.rejects(
+    () => access(path.join(canonicalRunsRoot, 'run-999', 'controller-session.json')),
+    (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+  );
 });

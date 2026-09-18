@@ -37,6 +37,13 @@ export function createScreenscriptAgentModule(dependencies: ModuleDependencies) 
     runsRoot,
     codexHome,
     processEnvironment: environment,
+    // The private channel calls Codex directly and never passes through the chat
+    // send path, so this is the only place that records the real model on the
+    // session row the sidebar and the composer read.
+    recordSessionModel: ({ sessionId, model, effort }) => {
+      providerModelsService.setSessionModel('codex', sessionId, model);
+      if (effort) providerModelsService.setSessionEffort('codex', sessionId, effort);
+    },
   });
   const codexBin = environment.SCREENSCRIPT_AGENT_CODEX_BIN || '/app/node_modules/.bin/codex';
   const authService = createScreenscriptAgentAuthService({

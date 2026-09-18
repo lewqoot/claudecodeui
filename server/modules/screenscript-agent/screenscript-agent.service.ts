@@ -45,6 +45,14 @@ type ServiceDependencies = {
   runsRoot: string;
   codexHome: string;
   processEnvironment: NodeJS.ProcessEnv;
+  /**
+   * Records the model a session actually ran with. CloudCLI's own chat path
+   * writes this on every send, but the private ScreenScript channel calls Codex
+   * directly and bypasses it, so without this the session row keeps `model=null`
+   * and the UI falls back to the catalog default (`gpt-5.4`) even when the run
+   * used another model.
+   */
+  recordSessionModel?: (input: { sessionId: string; model: string; effort?: string }) => void;
 };
 
 function exactChild(root: string, name: string): string {
@@ -211,11 +219,17 @@ export function createScreenscriptAgentService(dependencies: ServiceDependencies
       );
 
       const permissions = `permissions.screenscript_agent.filesystem={":root"="deny",":minimal"="read",${tomlQuoted(workspace)}="read",${tomlQuoted(canonicalCodexHome)}="deny"}`;
+      const capturedSessionIds = new Set<string>();
       let capturedControllerSession: string | null = null;
       let checkpointWrite = Promise.resolve();
       let checkpointFailure: unknown = null;
-      const captureControllerSession = (sessionId: unknown) => {
-        if (!isControllerTurn || capturedControllerSession || typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return;
+      // Every turn allocates exactly one session: the controller turn continues
+      // the managing session, a provider stage opens its own. Both need their
+      // model recorded; only the controller turn also owns the resume checkpoint.
+      const captureSessionId = (sessionId: unknown) => {
+        if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) return;
+        capturedSessionIds.add(sessionId);
+        if (!isControllerTurn || capturedControllerSession) return;
         capturedControllerSession = sessionId;
         const temporaryPath = `${controllerCheckpointPath}.${randomUUID()}.tmp`;
         checkpointWrite = dependencies.fileSystem.writeFile(
@@ -230,11 +244,11 @@ export function createScreenscriptAgentService(dependencies: ServiceDependencies
         isSSEStreamWriter: writer.isSSEStreamWriter,
         isWebSocketWriter: writer.isWebSocketWriter,
         send(data) {
-          if (data && typeof data === 'object') captureControllerSession((data as { sessionId?: unknown }).sessionId);
+          if (data && typeof data === 'object') captureSessionId((data as { sessionId?: unknown }).sessionId);
           writer.send(data);
         },
         setSessionId(sessionId) {
-          captureControllerSession(sessionId);
+          captureSessionId(sessionId);
           writer.setSessionId?.(sessionId);
         },
       };
@@ -254,6 +268,16 @@ export function createScreenscriptAgentService(dependencies: ServiceDependencies
           'permissions.screenscript_agent.network.enabled=false',
         ],
       }, isolatedWriter);
+      // Label only: a failed write must never fail an otherwise good run.
+      if (dependencies.recordSessionModel) {
+        for (const sessionId of capturedSessionIds) {
+          try {
+            dependencies.recordSessionModel({ sessionId, model, effort: input.effort });
+          } catch {
+            // Ignore: the run's own state is unaffected by a missing UI label.
+          }
+        }
+      }
       await checkpointWrite;
       if (checkpointFailure) throw checkpointFailure;
     },
